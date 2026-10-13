@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f4efe4;
+  --color-paper-2: #ece5d6;
+  --color-paper-3: #e2d9c6;
+  --color-sheet: #faf7f0;
+  --color-ink: #191714;
+  --color-ink-2: #2a2723;
+  --color-ink-3: #3a3631;
+  --color-muted: #6f685d;
+  --color-faint: #9a9284;
+  --color-signal: #ff4f1f;
+  --color-signal-ink: #c23a12;
+  --color-mustard: #e9b44c;
+  --color-teal: #2f7a6d;
+  --color-lilac: #9d8cd6;
+  --color-rose: #e07a8b;
+  --color-sky: #6aa6d8;
+  --color-online: #2f9e5a;
+  --color-idle: #e9b44c;
+  --color-dnd: #e0483a;
+
+  --font-sans: var(--ff-body);
+  --font-display: var(--ff-display);
+  --font-serif: var(--ff-serif);
+  --font-mono: var(--ff-mono);
+
+  --shadow-hard: 4px 4px 0 0 var(--color-ink);
+  --shadow-hard-sm: 2px 2px 0 0 var(--color-ink);
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--ff-body), system-ui, sans-serif;
+}
+
+::selection {
+  background: var(--color-signal);
+  color: var(--color-sheet);
+}
+
+/* barras de rolagem finas, no tom do papel */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-paper-3) transparent;
+}
+.scroll-ink {
+  scrollbar-width: none;
+}
+.scroll-ink::-webkit-scrollbar {
+  display: none;
+}
+
+/* textura leve de papel */
+.grain {
+  background-image: radial-gradient(rgba(25, 23, 20, 0.07) 1px, transparent 1px);
+  background-size: 6px 6px;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee {
+  animation: marquee 38s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    animation: none;
+  }
+}

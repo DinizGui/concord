@@ -1,0 +1,314 @@
+// Concord: backend estilo Discord.
+// IDs são snowflakes (BigInt) gerados na aplicação (lib/server/snowflake.ts).
+// Na API, todo BigInt sai como string, igual ao Discord.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           BigInt   @id
+  username     String   @unique @db.VarChar(32)
+  globalName   String?  @db.VarChar(32)
+  email        String   @unique @db.VarChar(254)
+  passwordHash String   @db.VarChar(255)
+  avatar       String?  @db.VarChar(512)
+  bio          String?  @db.VarChar(190)
+  createdAt    DateTime @default(now())
+
+  sessions      Session[]
+  ownedGuilds   Guild[]            @relation("GuildOwner")
+  memberships   Member[]
+  messages      Message[]
+  reactions     Reaction[]
+  dmChannels    ChannelRecipient[]
+  relationships Relationship[]     @relation("RelationshipOwner")
+  relatedBy     Relationship[]     @relation("RelationshipTarget")
+  presence      Presence?
+  readStates    ReadState[]
+  invites       Invite[]
+  bans          Ban[]
+  voiceState    VoiceState?
+}
+
+model Session {
+  tokenHash  String   @id @db.Char(64)
+  userId     BigInt
+  userAgent  String?  @db.VarChar(255)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Guild {
+  id              BigInt   @id
+  name            String   @db.VarChar(100)
+  icon            String?  @db.VarChar(512)
+  description     String?  @db.VarChar(300)
+  ownerId         BigInt
+  systemChannelId BigInt?
+  createdAt       DateTime @default(now())
+
+  owner       User         @relation("GuildOwner", fields: [ownerId], references: [id])
+  roles       Role[]
+  members     Member[]
+  channels    Channel[]
+  invites     Invite[]
+  bans        Ban[]
+  voiceStates VoiceState[]
+
+  @@index([ownerId])
+}
+
+// O cargo @everyone tem o mesmo id da guild (convenção do Discord).
+model Role {
+  id          BigInt  @id
+  guildId     BigInt
+  name        String  @db.VarChar(100)
+  color       Int     @default(0)
+  permissions BigInt
+  position    Int     @default(0)
+  hoist       Boolean @default(false)
+  mentionable Boolean @default(false)
+
+  guild   Guild        @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  members MemberRole[]
+
+  @@index([guildId])
+}
+
+model Member {
+  guildId  BigInt
+  userId   BigInt
+  nick     String?  @db.VarChar(32)
+  joinedAt DateTime @default(now())
+
+  guild Guild        @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roles MemberRole[]
+
+  @@id([guildId, userId])
+  @@index([userId])
+}
+
+model MemberRole {
+  guildId BigInt
+  userId  BigInt
+  roleId  BigInt
+
+  member Member @relation(fields: [guildId, userId], references: [guildId, userId], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([guildId, userId, roleId])
+  @@index([roleId])
+}
+
+// type: 0 texto, 1 DM, 2 voz, 3 DM em grupo, 4 categoria
+model Channel {
+  id               BigInt    @id
+  type             Int
+  guildId          BigInt?
+  name             String?   @db.VarChar(100)
+  topic            String?   @db.VarChar(1024)
+  position         Int       @default(0)
+  parentId         BigInt?
+  nsfw             Boolean   @default(false)
+  rateLimitPerUser Int       @default(0)
+  bitrate          Int?
+  userLimit        Int?
+  ownerId          BigInt?
+  icon             String?   @db.VarChar(512)
+  lastMessageId    BigInt?
+  lastPinAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  guild       Guild?                @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  overwrites  PermissionOverwrite[]
+  recipients  ChannelRecipient[]
+  messages    Message[]
+  invites     Invite[]
+  readStates  ReadState[]
+  voiceStates VoiceState[]
+
+  @@index([guildId])
+}
+
+// type: 0 cargo, 1 membro. targetId = id do cargo ou do usuário.
+model PermissionOverwrite {
+  channelId BigInt
+  targetId  BigInt
+  type      Int
+  allow     BigInt @default(0)
+  deny      BigInt @default(0)
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, targetId])
+}
+
+model ChannelRecipient {
+  channelId BigInt
+  userId    BigInt
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+  @@index([userId])
+}
+
+// type: 0 padrão, 7 entrada de membro, 19 resposta
+model Message {
+  id                  BigInt    @id
+  channelId           BigInt
+  authorId            BigInt
+  type                Int       @default(0)
+  content             String    @db.Text
+  editedAt            DateTime?
+  pinned              Boolean   @default(false)
+  mentionEveryone     Boolean   @default(false)
+  mentions            Json?
+  mentionRoles        Json?
+  referencedMessageId BigInt?
+
+  channel   Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  author    User       @relation(fields: [authorId], references: [id])
+  reactions Reaction[]
+
+  @@index([channelId, id])
+  @@index([authorId])
+}
+
+model Reaction {
+  messageId BigInt
+  userId    BigInt
+  emoji     String   @db.VarChar(64)
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, emoji, userId])
+}
+
+model Invite {
+  code      String    @id @db.VarChar(16)
+  guildId   BigInt
+  channelId BigInt
+  inviterId BigInt
+  maxUses   Int       @default(0)
+  uses      Int       @default(0)
+  maxAge    Int       @default(86400)
+  temporary Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  guild   Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  inviter User    @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([guildId])
+}
+
+model Ban {
+  guildId   BigInt
+  userId    BigInt
+  reason    String?  @db.VarChar(512)
+  createdAt DateTime @default(now())
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([guildId, userId])
+}
+
+// type: 1 amigo, 2 bloqueado, 3 pedido recebido, 4 pedido enviado
+model Relationship {
+  userId   BigInt
+  targetId BigInt
+  type     Int
+  since    DateTime @default(now())
+
+  user   User @relation("RelationshipOwner", fields: [userId], references: [id], onDelete: Cascade)
+  target User @relation("RelationshipTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@id([userId, targetId])
+  @@index([targetId])
+}
+
+// status = o que o usuário escolheu (online, idle, dnd, invisible).
+// online = tem gateway conectado (atualizado pelo heartbeat).
+model Presence {
+  userId       BigInt   @id
+  status       String   @default("online") @db.VarChar(16)
+  online       Boolean  @default(false)
+  customStatus String?  @db.VarChar(128)
+  lastSeenAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([online, lastSeenAt])
+}
+
+model ReadState {
+  userId        BigInt
+  channelId     BigInt
+  lastMessageId BigInt
+  mentionCount  Int    @default(0)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@id([userId, channelId])
+}
+
+// Só o estado (quem está em qual canal de voz). Mídia fica num SFU externo.
+model VoiceState {
+  userId    BigInt   @id
+  guildId   BigInt
+  channelId BigInt
+  sessionId String   @db.VarChar(64)
+  selfMute  Boolean  @default(false)
+  selfDeaf  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guild   Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([guildId])
+  @@index([channelId])
+}
+
+// Fila de eventos do gateway. Cada evento vai para:
+// - targetUserId: só aquele usuário
+// - guildId: membros da guild (filtrado por VIEW_CHANNEL quando tem channelId)
+// - só channelId (DM): destinatários do canal
+model GatewayEvent {
+  seq          BigInt   @id @default(autoincrement())
+  type         String   @db.VarChar(64)
+  data         Json
+  guildId      BigInt?
+  channelId    BigInt?
+  targetUserId BigInt?
+  createdAt    DateTime @default(now())
+
+  @@index([guildId, seq])
+  @@index([channelId, seq])
+  @@index([targetUserId, seq])
+  @@index([createdAt])
+}
+
+// Trava distribuída simples para a varredura periódica (presença, voz, limpeza).
+model SystemLock {
+  key String   @id @db.VarChar(64)
+  at  DateTime
+}
