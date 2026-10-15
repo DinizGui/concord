@@ -104,7 +104,14 @@ export async function loadChannelContext(channelId: bigint, userId: bigint): Pro
 
   const member = await loadMemberContext(channel.guildId, userId);
   if (!member) throw Errors.missingAccess();
-  const permissions = channelPermissions(member, channel, userId);
+  // thread herda as permissões do canal pai
+  let source: { overwrites: PermissionOverwrite[] } = channel;
+  if (channel.type === 11 && channel.parentId) {
+    const parent = await db.channel.findUnique({ where: { id: channel.parentId }, include: { overwrites: true } });
+    if (!parent) throw Errors.unknownChannel();
+    source = parent;
+  }
+  const permissions = channelPermissions(member, source, userId);
   if (!has(permissions, Permissions.VIEW_CHANNEL)) throw Errors.missingAccess();
   return { channel, member, permissions, recipientIds };
 }
@@ -119,5 +126,5 @@ export async function permissionsInChannel(channelId: bigint, userId: bigint): P
 }
 
 export function isTextLike(type: number) {
-  return type === 0 || type === 1 || type === 3;
+  return type === 0 || type === 1 || type === 3 || type === 11;
 }

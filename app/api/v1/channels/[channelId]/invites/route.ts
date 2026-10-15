@@ -7,6 +7,7 @@ import { inviteCode, inviteInclude, isInviteUsable } from "@/lib/server/invites"
 import { Permissions } from "@/lib/server/permissions";
 import { serializeInvite } from "@/lib/server/serialize";
 import { Form, idParam } from "@/lib/server/validate";
+import { limit } from "@/lib/server/ratelimit";
 
 type Params = { channelId: string };
 
@@ -25,6 +26,7 @@ export const GET = route<Params>(async (req, { params }) => {
 // POST /api/v1/channels/{id}/invites { max_age? (s, 0 = nunca expira), max_uses?, temporary?, unique? }
 export const POST = route<Params>(async (req, { params }) => {
   const { user } = await requireAuth(req);
+  await limit("inviteCreate", user.id);
   const channelId = idParam((await params).channelId, Errors.unknownChannel);
   const ctx = await loadChannelContext(channelId, user.id);
   const { channel } = ctx;

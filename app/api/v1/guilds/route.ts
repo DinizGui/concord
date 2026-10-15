@@ -6,6 +6,7 @@ import { Errors, json, readJson, route } from "@/lib/server/http";
 import { DEFAULT_EVERYONE_PERMISSIONS } from "@/lib/server/permissions";
 import { snowflake } from "@/lib/server/snowflake";
 import { Form } from "@/lib/server/validate";
+import { limit } from "@/lib/server/ratelimit";
 
 const MAX_GUILDS = 100;
 
@@ -13,6 +14,7 @@ const MAX_GUILDS = 100;
 // Cria a guild já com @everyone, categorias e os canais "geral" (texto) e "Geral" (voz).
 export const POST = route(async (req) => {
   const { user } = await requireAuth(req);
+  await limit("guildCreate", user.id);
   const form = new Form(await readJson(req));
   const name = form.string("name", { min: 2, max: 100 });
   const icon = form.optionalString("icon", { max: 512, pattern: /^https:\/\/\S+$/ });

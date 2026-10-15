@@ -9,6 +9,7 @@ import { Permissions, has } from "@/lib/server/permissions";
 import { sid } from "@/lib/server/serialize";
 import { Form, idParam } from "@/lib/server/validate";
 import type { NextRequest } from "next/server";
+import { removeFiles } from "@/lib/server/storage";
 
 type Params = { channelId: string; messageId: string };
 
@@ -65,6 +66,8 @@ export const DELETE = route<Params>(async (req, { params }) => {
   const canManage = ctx.channel.guildId != null && has(ctx.permissions, Permissions.MANAGE_MESSAGES);
   if (!isAuthor && !canManage) throw Errors.missingPermissions();
 
+  // arquivos no Blob não somem sozinhos com a linha do banco
+  await removeFiles((message.attachments ?? []).map((a) => a.url));
   await db.message.delete({ where: { id: message.id } });
   await dispatch(
     "MESSAGE_DELETE",

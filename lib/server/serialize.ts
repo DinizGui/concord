@@ -35,6 +35,7 @@ export function serializeSelf(user: User) {
   return {
     ...serializeUser(user),
     email: user.email,
+    verified: user.emailVerifiedAt != null,
     created_at: iso(user.createdAt),
   };
 }
@@ -99,6 +100,9 @@ export function serializeChannel(
     user_limit: channel.userLimit,
     last_pin_timestamp: iso(channel.lastPinAt),
     permission_overwrites: (extra.overwrites ?? []).map(serializeOverwrite),
+    ...(channel.type === 11
+      ? { owner_id: sid(channel.ownerId), message_count: channel.messageCount, thread_metadata: { archived: channel.archived } }
+      : {}),
   };
 }
 

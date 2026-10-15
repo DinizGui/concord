@@ -1,4 +1,4 @@
-import type { Channel, Guild, Member, MemberRole, PermissionOverwrite, Role, VoiceState } from "@prisma/client";
+import type { Channel, Emoji, Guild, Member, MemberRole, PermissionOverwrite, Role, VoiceState } from "@prisma/client";
 import { db } from "./db";
 import { dispatch, dispatchToUsers } from "./events";
 import { Permissions, computeBasePermissions, computeChannelPermissions, has } from "./permissions";
@@ -15,13 +15,34 @@ type GuildRow = Guild & {
   roles: Role[];
   channels: (Channel & { overwrites: PermissionOverwrite[] })[];
   voiceStates: VoiceState[];
+  emojis: Omit<Emoji, "data">[];
   _count: { members: number };
 };
+
+export const emojiSelect = {
+  id: true,
+  guildId: true,
+  name: true,
+  creatorId: true,
+  animated: true,
+  contentType: true,
+  url: true,
+  createdAt: true,
+} as const;
+
+export function emojiUrl(e: { id: bigint; url: string | null; animated: boolean }) {
+  return e.url ?? `/api/v1/emojis/${e.id}.${e.animated ? "gif" : "png"}`;
+}
+
+export function serializeEmoji(e: Omit<Emoji, "data">) {
+  return { id: sid(e.id), name: e.name, animated: e.animated, available: true, url: emojiUrl(e) };
+}
 
 export const guildInclude = {
   roles: true,
   channels: { include: { overwrites: true } },
   voiceStates: true,
+  emojis: { select: emojiSelect, orderBy: { name: "asc" } },
   _count: { select: { members: true } },
 } as const;
 
@@ -36,13 +57,18 @@ export function guildPayload(guild: GuildRow, member: Member & { roles: MemberRo
     everyonePermissions: everyone?.permissions ?? BigInt(0),
     rolePermissions: guild.roles.filter((r) => roleIds.includes(r.id)).map((r) => r.permissions),
   });
+  const byId = new Map(guild.channels.map((c) => [c.id, c]));
   const channels = guild.channels
-    .filter((c) =>
-      has(
-        computeChannelPermissions({ base, overwrites: c.overwrites, guildId: guild.id, roleIds, userId: member.userId }),
+    .filter((c) => !(c.type === 11 && c.archived))
+    .filter((c) => {
+      // thread: vale a permissão do canal pai
+      const source = c.type === 11 && c.parentId ? byId.get(c.parentId) : c;
+      if (!source) return false;
+      return has(
+        computeChannelPermissions({ base, overwrites: source.overwrites, guildId: guild.id, roleIds, userId: member.userId }),
         Permissions.VIEW_CHANNEL,
-      ),
-    )
+      );
+    })
     .sort((a, b) => a.position - b.position || Number(a.id - b.id));
 
   return {
@@ -54,6 +80,7 @@ export function guildPayload(guild: GuildRow, member: Member & { roles: MemberRo
     channels: channels.map((c) => serializeChannel(c, { overwrites: c.overwrites })),
     members: [serializeMember(member)],
     voice_states: guild.voiceStates.map(serializeVoiceState),
+    emojis: guild.emojis.map(serializeEmoji),
   };
 }
 

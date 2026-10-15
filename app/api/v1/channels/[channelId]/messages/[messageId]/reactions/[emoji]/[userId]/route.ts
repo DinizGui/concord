@@ -1,11 +1,13 @@
 import { requirePermission } from "@/lib/server/access";
 import { db } from "@/lib/server/db";
+import { CUSTOM_REACTION } from "@/lib/server/emojis";
 import { dispatch } from "@/lib/server/events";
 import { ApiError, Errors, noContent, route } from "@/lib/server/http";
 import { memberPayload } from "@/lib/server/messages";
 import { Permissions } from "@/lib/server/permissions";
 import { loadReactionTarget, reactionPayload } from "@/lib/server/reactions";
 import { idParam } from "@/lib/server/validate";
+import { limit } from "@/lib/server/ratelimit";
 
 type Params = { channelId: string; messageId: string; emoji: string; userId: string };
 
@@ -14,7 +16,12 @@ const MAX_DISTINCT_EMOJIS = 20;
 // PUT /api/v1/channels/{id}/messages/{message.id}/reactions/{emoji}/@me
 export const PUT = route<Params>(async (req, { params }) => {
   const { user, ctx, message, emoji, channelId, guildId } = await loadReactionTarget(req, params);
+  await limit("reaction", user.id);
   if ((await params).userId !== "@me") throw Errors.missingAccess();
+
+  // emoji do servidor ("nome:id") precisa existir
+  const custom = emoji!.match(CUSTOM_REACTION);
+  if (custom && !(await db.emoji.count({ where: { id: BigInt(custom[1]) } }))) throw Errors.unknownEmoji();
 
   const existing = await db.reaction.findMany({ where: { messageId: message.id }, select: { emoji: true }, distinct: ["emoji"] });
   const isNewEmoji = !existing.some((r) => r.emoji === emoji);

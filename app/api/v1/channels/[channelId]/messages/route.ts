@@ -4,8 +4,16 @@ import { db } from "@/lib/server/db";
 import { dispatch } from "@/lib/server/events";
 import { Errors, json, readJson, route } from "@/lib/server/http";
 import { parseMentions } from "@/lib/server/mentions";
-import { fetchMessages, memberPayload, messageInclude, serializeMessages, serializeOne } from "@/lib/server/messages";
+import {
+  attachmentSelect,
+  fetchMessages,
+  memberPayload,
+  messageInclude,
+  serializeMessages,
+  serializeOne,
+} from "@/lib/server/messages";
 import { Permissions, has } from "@/lib/server/permissions";
+import { limit } from "@/lib/server/ratelimit";
 import { isBlockedBetween } from "@/lib/server/relationships";
 import { snowflake, snowflakeDate, parseSnowflake } from "@/lib/server/snowflake";
 import { Form, idParam, queryInt } from "@/lib/server/validate";
@@ -30,7 +38,7 @@ export const GET = route<Params>(async (req, { params }) => {
   return json(await serializeMessages(rows, { viewerId: user.id, guildId: ctx.channel.guildId }));
 });
 
-// POST /api/v1/channels/{id}/messages { content, nonce?, message_reference?: { message_id } }
+// POST /api/v1/channels/{id}/messages { content, nonce?, message_reference?: { message_id }, attachments?: [{ id }] }
 export const POST = route<Params>(async (req, { params }) => {
   const { user } = await requireAuth(req);
   const channelId = idParam((await params).channelId, Errors.unknownChannel);
@@ -38,13 +46,29 @@ export const POST = route<Params>(async (req, { params }) => {
   const { channel } = ctx;
   if (!isTextLike(channel.type)) throw Errors.invalidChannelType();
   requirePermission(ctx, Permissions.SEND_MESSAGES);
+  await limit("message", user.id);
 
   const body = await readJson(req);
   const form = new Form(body);
   const content = form.optionalString("content", { max: 2000 }) ?? "";
   const nonce = form.optionalString("nonce", { max: 64 });
   form.done();
-  if (!content) throw Errors.emptyMessage();
+
+  // anexos já enviados por POST /attachments: precisam ser meus, deste canal e ainda soltos
+  const rawAttachments = Array.isArray(body.attachments) ? body.attachments.slice(0, 11) : [];
+  if (rawAttachments.length > 10) throw Errors.badRequest("Maximum 10 attachments");
+  const attachmentIds = rawAttachments
+    .map((a) => parseSnowflake((a as { id?: unknown })?.id))
+    .filter((id): id is bigint => id != null);
+  if (attachmentIds.length !== rawAttachments.length) throw Errors.badRequest("Invalid attachment id");
+  if (attachmentIds.length) {
+    requirePermission(ctx, Permissions.ATTACH_FILES);
+    const owned = await db.attachment.count({
+      where: { id: { in: attachmentIds }, channelId, uploaderId: user.id, messageId: null },
+    });
+    if (owned !== new Set(attachmentIds.map(String)).size) throw Errors.badRequest("Unknown attachment");
+  }
+  if (!content && !attachmentIds.length) throw Errors.emptyMessage();
 
   let referencedId: bigint | null = null;
   const ref = body.message_reference as { message_id?: unknown } | undefined;
@@ -93,8 +117,16 @@ export const POST = route<Params>(async (req, { params }) => {
     },
     include: messageInclude,
   });
+  if (attachmentIds.length) {
+    await db.attachment.updateMany({ where: { id: { in: attachmentIds }, messageId: null }, data: { messageId: id } });
+    message.attachments = await db.attachment.findMany({
+      where: { messageId: id },
+      select: attachmentSelect,
+      orderBy: { id: "asc" },
+    });
+  }
 
-  await db.channel.update({ where: { id: channelId }, data: { lastMessageId: id } });
+  await db.channel.update({ where: { id: channelId }, data: { lastMessageId: id, messageCount: { increment: 1 } } });
   await db.readState.upsert({
     where: { userId_channelId: { userId: user.id, channelId } },
     create: { userId: user.id, channelId, lastMessageId: id },

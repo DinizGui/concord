@@ -3,6 +3,7 @@ import { unstable_rethrow } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/server/auth";
 import { errorResponse } from "@/lib/server/http";
+import { busEnabled, busVersion, waitForEvents } from "@/lib/server/bus";
 import { maybeSweep } from "@/lib/server/maintenance";
 import { touchPresence } from "@/lib/server/presence";
 import { parseSnowflake } from "@/lib/server/snowflake";
@@ -19,11 +20,12 @@ import {
 export const maxDuration = 300;
 
 const POLL_MS = Number(process.env.GATEWAY_POLL_MS ?? 1000);
+// com Redis avisando, o banco só é consultado como rede de segurança
+const POLL_WITH_BUS_MS = Number(process.env.GATEWAY_POLL_WITH_BUS_MS ?? 5000);
 const MAX_LIFETIME_MS = Number(process.env.GATEWAY_MAX_LIFETIME_MS ?? 240_000);
 const KEEPALIVE_MS = 15_000;
 const PRESENCE_TOUCH_MS = 30_000;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // GET /api/v1/gateway/connect  (Server-Sent Events)
 //
@@ -96,12 +98,14 @@ export async function GET(req: NextRequest) {
           send({ op: Op.DISPATCH, t: "READY", s: cursor.toString(), d: ready });
         }
 
+        const pollMs = (await busEnabled()) ? POLL_WITH_BUS_MS : POLL_MS;
         const startedAt = Date.now();
         let lastWrite = Date.now();
         let lastTouch = Date.now();
         let resumed = resumeSeq == null;
 
         while (!closed) {
+          const seen = await busVersion();
           const events = await sub.fetch(cursor);
           let refreshed = false;
           for (const ev of events) {
@@ -139,7 +143,7 @@ export async function GET(req: NextRequest) {
             write(": keepalive\n\n");
             lastWrite = now;
           }
-          await sleep(POLL_MS);
+          await waitForEvents(Math.min(pollMs, KEEPALIVE_MS), seen);
         }
       } catch (err) {
         console.error("[concord] gateway caiu", err);

@@ -6,6 +6,7 @@ import { Errors, noContent, readJson, route } from "@/lib/server/http";
 import { Permissions } from "@/lib/server/permissions";
 import { sid } from "@/lib/server/serialize";
 import { Form, idParam } from "@/lib/server/validate";
+import { removeFiles } from "@/lib/server/storage";
 
 // POST /api/v1/channels/{id}/messages/bulk-delete { messages: [ids] } (2 a 100)
 export const POST = route<{ channelId: string }>(async (req, { params }) => {
@@ -21,6 +22,8 @@ export const POST = route<{ channelId: string }>(async (req, { params }) => {
   if (!ids || ids.length < 2) throw Errors.badRequest("messages must contain between 2 and 100 ids");
 
   const found = await db.message.findMany({ where: { channelId, id: { in: ids } }, select: { id: true } });
+  const files = await db.attachment.findMany({ where: { messageId: { in: found.map((m) => m.id) } }, select: { url: true } });
+  await removeFiles(files.map((f) => f.url));
   await db.message.deleteMany({ where: { channelId, id: { in: found.map((m) => m.id) } } });
   await dispatch(
     "MESSAGE_DELETE_BULK",

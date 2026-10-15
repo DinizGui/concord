@@ -12,14 +12,16 @@ datasource db {
 }
 
 model User {
-  id           BigInt   @id
-  username     String   @unique @db.VarChar(32)
-  globalName   String?  @db.VarChar(32)
-  email        String   @unique @db.VarChar(254)
-  passwordHash String   @db.VarChar(255)
-  avatar       String?  @db.VarChar(512)
-  bio          String?  @db.VarChar(190)
-  createdAt    DateTime @default(now())
+  id              BigInt    @id
+  username        String    @unique @db.VarChar(32)
+  globalName      String?   @db.VarChar(32)
+  email           String    @unique @db.VarChar(254)
+  passwordHash    String    @db.VarChar(255)
+  avatar          String?   @db.VarChar(512)
+  bio             String?   @db.VarChar(190)
+  createdAt       DateTime  @default(now())
+  // e-mail confirmado pelo link enviado no cadastro
+  emailVerifiedAt DateTime?
 
   sessions      Session[]
   ownedGuilds   Guild[]            @relation("GuildOwner")
@@ -34,6 +36,10 @@ model User {
   invites       Invite[]
   bans          Ban[]
   voiceState    VoiceState?
+  authTokens    AuthToken[]
+  attachments   Attachment[]
+  emojis        Emoji[]
+  webhooks      Webhook[]
 }
 
 model Session {
@@ -64,6 +70,8 @@ model Guild {
   invites     Invite[]
   bans        Ban[]
   voiceStates VoiceState[]
+  emojis      Emoji[]
+  webhooks    Webhook[]
 
   @@index([ownerId])
 }
@@ -111,7 +119,8 @@ model MemberRole {
   @@index([roleId])
 }
 
-// type: 0 texto, 1 DM, 2 voz, 3 DM em grupo, 4 categoria
+// type: 0 texto, 1 DM, 2 voz, 3 DM em grupo, 4 categoria, 11 thread
+// Thread: parentId = canal de texto; se nasceu de uma mensagem, o id da thread é o id dessa mensagem.
 model Channel {
   id               BigInt    @id
   type             Int
@@ -128,6 +137,8 @@ model Channel {
   icon             String?   @db.VarChar(512)
   lastMessageId    BigInt?
   lastPinAt        DateTime?
+  archived         Boolean   @default(false)
+  messageCount     Int       @default(0)
   createdAt        DateTime  @default(now())
 
   guild       Guild?                @relation(fields: [guildId], references: [id], onDelete: Cascade)
@@ -137,8 +148,11 @@ model Channel {
   invites     Invite[]
   readStates  ReadState[]
   voiceStates VoiceState[]
+  attachments Attachment[]
+  webhooks    Webhook[]
 
   @@index([guildId])
+  @@index([parentId])
 }
 
 // type: 0 cargo, 1 membro. targetId = id do cargo ou do usuário.
@@ -178,10 +192,15 @@ model Message {
   mentions            Json?
   mentionRoles        Json?
   referencedMessageId BigInt?
+  // mensagem mandada por webhook: authorId é quem criou o webhook, o nome/foto vêm daqui
+  webhookId           BigInt?
+  authorName          String?   @db.VarChar(80)
+  authorAvatar        String?   @db.VarChar(512)
 
-  channel   Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  author    User       @relation(fields: [authorId], references: [id])
-  reactions Reaction[]
+  channel     Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  author      User         @relation(fields: [authorId], references: [id])
+  reactions   Reaction[]
+  attachments Attachment[]
 
   @@index([channelId, id])
   @@index([authorId])
@@ -311,4 +330,93 @@ model GatewayEvent {
 model SystemLock {
   key String   @id @db.VarChar(64)
   at  DateTime
+}
+
+// Arquivo enviado num canal. Fica "solto" (messageId nulo) até ir numa mensagem;
+// soltos por mais de 1h são apagados pela varredura.
+// Guardado no Vercel Blob (url) quando BLOB_READ_WRITE_TOKEN existe; senão no próprio banco (data).
+model Attachment {
+  id          BigInt   @id
+  channelId   BigInt
+  uploaderId  BigInt
+  messageId   BigInt?
+  filename    String   @db.VarChar(255)
+  contentType String?  @db.VarChar(127)
+  size        Int
+  width       Int?
+  height      Int?
+  // parte aleatória do link (o id sozinho é previsível)
+  token       String   @default("") @db.VarChar(32)
+  url         String?  @db.VarChar(1024)
+  data        Bytes?   @db.MediumBlob
+  createdAt   DateTime @default(now())
+
+  channel  Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  uploader User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([uploaderId, createdAt])
+  @@index([channelId])
+}
+
+// Janela fixa por chave (ex.: "login:ip:1.2.3.4"). Linhas vencidas são limpas pela varredura.
+model RateLimit {
+  key     String   @id @db.VarChar(191)
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}
+
+// Tokens de uso único mandados por e-mail. kind: "reset" (senha) ou "verify" (e-mail). No banco só o SHA-256.
+model AuthToken {
+  tokenHash String    @id @db.Char(64)
+  userId    BigInt
+  kind      String    @db.VarChar(16)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@index([expiresAt])
+}
+
+// Emoji próprio do servidor. Usado no texto como <:nome:id> e nas reações como "nome:id".
+model Emoji {
+  id          BigInt   @id
+  guildId     BigInt
+  name        String   @db.VarChar(32)
+  creatorId   BigInt
+  animated    Boolean  @default(false)
+  contentType String   @db.VarChar(32)
+  url         String?  @db.VarChar(1024)
+  data        Bytes?   @db.MediumBlob
+  createdAt   DateTime @default(now())
+
+  guild   Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  creator User  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, name])
+}
+
+// Webhook: URL secreta que posta mensagens num canal (integrações, bots simples).
+model Webhook {
+  id        BigInt   @id
+  guildId   BigInt
+  channelId BigInt
+  creatorId BigInt
+  name      String   @db.VarChar(80)
+  avatar    String?  @db.VarChar(512)
+  tokenHash String   @db.Char(64)
+  createdAt DateTime @default(now())
+
+  guild   Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  creator User    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([guildId])
+  @@index([channelId])
 }

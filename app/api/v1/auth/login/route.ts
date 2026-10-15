@@ -3,15 +3,18 @@ import { db } from "@/lib/server/db";
 import { ApiError, json, readJson, route } from "@/lib/server/http";
 import { serializeSelf } from "@/lib/server/serialize";
 import { Form } from "@/lib/server/validate";
+import { clientIp, limit } from "@/lib/server/ratelimit";
 
 // POST /api/v1/auth/login { login (e-mail ou username), password }
 export const POST = route(async (req) => {
+  await limit("loginIp", clientIp(req));
   const form = new Form(await readJson(req));
   const login = form.string("login", { max: 254 });
   const password = form.string("password", { max: 72, trim: false });
   form.done();
 
   const key = login!.toLowerCase();
+  await limit("loginAccount", key);
   const user = await db.user.findFirst({ where: key.includes("@") ? { email: key } : { username: key } });
   const ok = await verifyPassword(password!, user?.passwordHash ?? (await getDummyHash()));
 

@@ -9,6 +9,7 @@ export class ApiError extends Error {
     public code: number,
     message: string,
     public errors?: Record<string, unknown>,
+    public retryAfter?: number,
   ) {
     super(message);
   }
@@ -31,7 +32,7 @@ export const Errors = {
   emptyMessage: () => new ApiError(400, 50006, "Cannot send an empty message"),
   invalidChannelType: () => new ApiError(400, 50024, "Cannot execute action on this channel type"),
   slowmode: (retryAfter: number) =>
-    new ApiError(429, 20016, `This action cannot be performed due to slowmode rate limit. Retry after ${retryAfter}s`),
+    new ApiError(429, 20016, `This action cannot be performed due to slowmode rate limit. Retry after ${retryAfter}s`, undefined, retryAfter),
   banned: () => new ApiError(403, 40007, "The user is banned from this guild"),
   maxGuilds: () => new ApiError(400, 30001, "Maximum number of guilds reached (100)"),
   maxPins: () => new ApiError(400, 30003, "Maximum number of pins reached (50)"),
@@ -66,6 +67,13 @@ export function errorResponse(err: unknown) {
   if (err instanceof ApiError) {
     const body: Record<string, unknown> = { code: err.code, message: err.message };
     if (err.errors) body.errors = err.errors;
+    if (err.retryAfter != null) {
+      body.retry_after = err.retryAfter;
+      body.global = false;
+      const res = json(body, err.status);
+      res.headers.set("Retry-After", String(err.retryAfter));
+      return res;
+    }
     return json(body, err.status);
   }
   if (err instanceof Prisma.PrismaClientKnownRequestError) {

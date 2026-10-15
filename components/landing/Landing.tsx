@@ -124,7 +124,7 @@ function Hero() {
               <span className="h-2.5 w-2.5 rounded-full bg-mustard" />
               <span className="h-2.5 w-2.5 rounded-full bg-online" />
               <span className="ml-3 font-mono text-[11px] text-faint">concord / Estúdio Solid / #geral</span>
-              <span className="ml-auto font-mono text-[11px] text-faint">pode clicar, é o app mesmo</span>
+              <span className="ml-auto font-mono text-[11px] text-faint">demonstração, pode clicar</span>
             </div>
             <div className="h-[640px]">
               <ConcordApp embedded />

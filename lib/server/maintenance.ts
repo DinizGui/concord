@@ -2,9 +2,11 @@ import { db } from "./db";
 import { dispatch } from "./events";
 import { PRESENCE_TIMEOUT_MS, broadcastPresence } from "./presence";
 import { serializeVoiceState } from "./serialize";
+import { removeFiles } from "./storage";
 
 const SWEEP_INTERVAL_MS = 30_000;
 const EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const ORPHAN_ATTACHMENT_MS = 60 * 60 * 1000;
 
 // Na Vercel não existe processo de fundo. Quem estiver com o gateway aberto
 // tenta pegar esta trava a cada 30s; só um consegue e faz a varredura.
@@ -61,4 +63,19 @@ async function sweep(now: Date) {
 
   // 4. Convites vencidos
   await db.invite.deleteMany({ where: { expiresAt: { lt: now } } });
+
+  // 5. Anexos que subiram mas nunca foram numa mensagem
+  const orphans = await db.attachment.findMany({
+    where: { messageId: null, createdAt: { lt: new Date(now.getTime() - ORPHAN_ATTACHMENT_MS) } },
+    select: { id: true, url: true },
+    take: 500,
+  });
+  if (orphans.length) {
+    await removeFiles(orphans.map((o) => o.url));
+    await db.attachment.deleteMany({ where: { id: { in: orphans.map((o) => o.id) } } });
+  }
+
+  // 6. Janelas de limite vencidas e tokens de e-mail usados/vencidos
+  await db.rateLimit.deleteMany({ where: { resetAt: { lt: now } } });
+  await db.authToken.deleteMany({ where: { expiresAt: { lt: now } } });
 }

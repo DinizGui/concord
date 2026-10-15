@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { ConcordApp } from "@/components/app/ConcordApp";
+import { LiveApp } from "@/components/live/LiveApp";
 
 export const metadata: Metadata = {
   title: "Concord",
 };
 
 export default function AppPage() {
-  return <ConcordApp />;
+  return <LiveApp />;
 }

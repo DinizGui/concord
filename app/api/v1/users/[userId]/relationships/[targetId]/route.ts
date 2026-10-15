@@ -2,6 +2,7 @@ import { requireAuth, requireMe } from "@/lib/server/auth";
 import { Errors, noContent, readJson, route } from "@/lib/server/http";
 import { Rel, blockUser, removeRelationship, sendFriendRequest } from "@/lib/server/relationships";
 import { Form, idParam } from "@/lib/server/validate";
+import { limit } from "@/lib/server/ratelimit";
 
 type Params = { userId: string; targetId: string };
 
@@ -9,6 +10,7 @@ type Params = { userId: string; targetId: string };
 // sem type (ou 1): pede/aceita amizade. type 2: bloqueia.
 export const PUT = route<Params>(async (req, { params }) => {
   const { user } = await requireAuth(req);
+  await limit("friendRequest", user.id);
   const p = await params;
   requireMe(p.userId);
   const targetId = idParam(p.targetId, Errors.unknownUser);

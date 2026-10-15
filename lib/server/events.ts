@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { notifyEvents } from "./bus";
 import { db } from "./db";
 
 // Grava eventos na fila do gateway. O gateway (SSE) lê essa tabela e entrega a quem tem acesso.
@@ -12,6 +13,7 @@ export async function dispatch(type: string, data: object, scope: Scope = {}) {
   await db.gatewayEvent.create({
     data: { type, data: asJson(data), guildId: scope.guildId ?? null, channelId: scope.channelId ?? null },
   });
+  await notifyEvents();
 }
 
 // Para usuários específicos (uma linha por usuário)
@@ -32,4 +34,5 @@ export async function dispatchToUsers(
       channelId: scope.channelId ?? null,
     })),
   });
+  await notifyEvents();
 }

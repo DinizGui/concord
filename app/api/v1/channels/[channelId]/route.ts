@@ -63,6 +63,21 @@ export const PATCH = route<Params>(async (req, { params }) => {
     return json(view(full, user.id));
   }
 
+  // thread: o dono (ou MANAGE_CHANNELS) troca nome e arquiva
+  if (channel.type === 11) {
+    if (channel.ownerId !== user.id) requirePermission(ctx, Permissions.MANAGE_CHANNELS);
+    const threadName = form.optionalString("name", { min: 1, max: 100 });
+    const archived = form.bool("archived");
+    form.done();
+    await db.channel.update({
+      where: { id: channelId },
+      data: { ...(threadName ? { name: threadName } : {}), ...(archived !== undefined ? { archived } : {}) },
+    });
+    const payload = await serializeFor(channelId, user.id);
+    await dispatch("CHANNEL_UPDATE", payload, { guildId: channel.guildId, channelId });
+    return json(payload);
+  }
+
   requirePermission(ctx, Permissions.MANAGE_CHANNELS);
   const name = form.optionalString("name", { min: 1, max: 100 });
   const topic = form.optionalString("topic", { max: 1024 });
@@ -123,8 +138,15 @@ export const DELETE = route<Params>(async (req, { params }) => {
     return json(payload);
   }
 
-  requirePermission(ctx, Permissions.MANAGE_CHANNELS);
+  if (!(channel.type === 11 && channel.ownerId === user.id)) requirePermission(ctx, Permissions.MANAGE_CHANNELS);
   const guildId = channel.guildId;
+
+  // canal de texto apagado leva as threads junto
+  const threads = channel.type === 0 ? await db.channel.findMany({ where: { parentId: channelId, type: 11 } }) : [];
+  if (threads.length) await db.channel.deleteMany({ where: { id: { in: threads.map((t) => t.id) } } });
+  for (const t of threads) {
+    await dispatch("CHANNEL_DELETE", serializeChannel(t, { overwrites: [] }), { guildId });
+  }
 
   const children = channel.type === 4 ? await db.channel.findMany({ where: { parentId: channelId } }) : [];
   await db.$transaction([

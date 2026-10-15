@@ -4,9 +4,12 @@ import { ApiError, json, readJson, route } from "@/lib/server/http";
 import { serializeSelf } from "@/lib/server/serialize";
 import { snowflake } from "@/lib/server/snowflake";
 import { Form, USERNAME_PATTERN } from "@/lib/server/validate";
+import { clientIp, limit } from "@/lib/server/ratelimit";
+import { sendVerification } from "@/lib/server/verification";
 
 // POST /api/v1/auth/register { email, username, password, global_name? }
 export const POST = route(async (req) => {
+  await limit("register", clientIp(req));
   const body = await readJson(req);
   if (typeof body.username === "string") body.username = body.username.trim().toLowerCase();
   if (typeof body.email === "string") body.email = body.email.trim().toLowerCase();
@@ -43,6 +46,9 @@ export const POST = route(async (req) => {
       presence: { create: {} },
     },
   });
+
+  // confirmação de e-mail não trava o cadastro: se o envio falhar, dá pra pedir de novo no app
+  await sendVerification(req, user).catch((err) => console.error("[concord] falha ao mandar confirmação", err));
 
   const token = await createSession(user.id, req.headers.get("user-agent"));
   const res = json({ token, user: serializeSelf(user) }, 201);

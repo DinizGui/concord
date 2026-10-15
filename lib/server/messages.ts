@@ -1,10 +1,49 @@
-import type { Message, Prisma, Reaction, User } from "@prisma/client";
+import type { Attachment, Message, Prisma, Reaction, User } from "@prisma/client";
 import { db } from "./db";
 import { serializeMember, serializeUser, sid, timestampOf } from "./serialize";
 
-type MessageRow = Message & { author: User; reactions: Reaction[] };
+type AttachmentMeta = Omit<Attachment, "data">;
+type MessageRow = Message & { author: User; reactions: Reaction[]; attachments?: AttachmentMeta[] };
 
-const include = { author: true, reactions: true } satisfies Prisma.MessageInclude;
+// "data" (bytes do arquivo) nunca vem junto: só os metadados
+export const attachmentSelect = {
+  id: true,
+  channelId: true,
+  uploaderId: true,
+  messageId: true,
+  filename: true,
+  contentType: true,
+  size: true,
+  width: true,
+  height: true,
+  token: true,
+  url: true,
+  createdAt: true,
+} satisfies Prisma.AttachmentSelect;
+
+const include = {
+  author: true,
+  reactions: true,
+  attachments: { select: attachmentSelect, orderBy: { id: "asc" } },
+} satisfies Prisma.MessageInclude;
+
+export function attachmentUrl(a: AttachmentMeta) {
+  return a.url ?? `/api/v1/attachments/${a.id}/${a.token}/${encodeURIComponent(a.filename)}`;
+}
+
+export function serializeAttachment(a: AttachmentMeta) {
+  const url = attachmentUrl(a);
+  return {
+    id: sid(a.id),
+    filename: a.filename,
+    size: a.size,
+    url,
+    proxy_url: url,
+    content_type: a.contentType,
+    width: a.width,
+    height: a.height,
+  };
+}
 
 function idsFromJson(value: Prisma.JsonValue | null): bigint[] {
   if (!Array.isArray(value)) return [];
@@ -33,12 +72,17 @@ export async function serializeMessages(rows: MessageRow[], opts: { viewerId?: b
     if (m.referencedMessageId) refIds.add(m.referencedMessageId.toString());
   }
 
-  const [mentioned, referenced] = await Promise.all([
+  const [mentioned, referenced, threads] = await Promise.all([
     mentionIds.size ? db.user.findMany({ where: { id: { in: [...mentionIds].map(BigInt) } } }) : [],
     refIds.size
       ? db.message.findMany({ where: { id: { in: [...refIds].map(BigInt) } }, include })
       : ([] as MessageRow[]),
+    // threads que nasceram destas mensagens (id da thread = id da mensagem)
+    rows.length
+      ? db.channel.findMany({ where: { id: { in: rows.map((m) => m.id) }, type: 11 }, select: { id: true, name: true, messageCount: true, archived: true } })
+      : [],
   ]);
+  const threadById = new Map(threads.map((t) => [t.id.toString(), t]));
   const userById = new Map(mentioned.map((u) => [u.id.toString(), u]));
   const refById = new Map(referenced.map((m) => [m.id.toString(), m]));
 
@@ -46,7 +90,11 @@ export async function serializeMessages(rows: MessageRow[], opts: { viewerId?: b
     id: sid(m.id),
     channel_id: sid(m.channelId),
     ...(opts.guildId ? { guild_id: sid(opts.guildId) } : {}),
-    author: serializeUser(m.author),
+    // mensagem de webhook aparece com o nome/foto do webhook, não de quem o criou
+    author: m.webhookId
+      ? { id: sid(m.webhookId), username: m.authorName ?? "Webhook", global_name: null, avatar: m.authorAvatar, bio: null, bot: true }
+      : serializeUser(m.author),
+    ...(m.webhookId ? { webhook_id: sid(m.webhookId) } : {}),
     content: m.content,
     timestamp: timestampOf(m.id),
     edited_timestamp: m.editedAt ? m.editedAt.toISOString() : null,
@@ -59,15 +107,19 @@ export async function serializeMessages(rows: MessageRow[], opts: { viewerId?: b
       .filter((u): u is User => !!u)
       .map(serializeUser),
     mention_roles: idsFromJson(m.mentionRoles).map(String),
-    attachments: [],
+    attachments: (m.attachments ?? []).map(serializeAttachment),
     embeds: [],
     reactions: aggregateReactions(m.reactions, opts.viewerId),
   });
 
   return rows.map((m) => {
     const ref = m.referencedMessageId ? refById.get(m.referencedMessageId.toString()) : undefined;
+    const thread = threadById.get(m.id.toString());
     return {
       ...base(m),
+      ...(thread
+        ? { thread: { id: sid(thread.id), name: thread.name, message_count: thread.messageCount, archived: thread.archived } }
+        : {}),
       ...(m.referencedMessageId
         ? {
             message_reference: { message_id: sid(m.referencedMessageId), channel_id: sid(m.channelId) },
